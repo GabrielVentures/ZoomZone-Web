@@ -1,0 +1,173 @@
+/* Global Responsive Styles */
+
+/* Mobile padding optimization */
+@media (max-width: 768px) {
+  .ant-layout-content {
+    padding: 16px !important;
+  }
+
+  /* Reduce card padding on mobile */
+  .ant-card-body {
+    padding: 16px;
+  }
+
+  /* Optimize table on mobile */
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  /* Make buttons stack on mobile */
+  .ant-space {
+    flex-wrap: wrap;
+  }
+}
+
+/* Tablet optimization */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .ant-layout-content {
+    padding: 20px;
+  }
+}
+
+/* Desktop */
+@media (min-width: 1024px) {
+  .ant-layout-content {
+    padding: 24px;
+  }
+}
+
+/* Chart responsiveness */
+.recharts-responsive-container {
+  min-height: 250px;
+}
+
+@media (max-width: 768px) {
+  .recharts-responsive-container {
+    min-height: 200px;
+  }
+}
+
+/* ===================================
+   Table Interaction Enhancements
+   =================================== */
+
+/* Checkbox column - larger click area */
+.ant-table-selection-column {
+  padding: 16px !important;
+  width: 60px !important;
+}
+
+/* Checkbox wrapper - easier to click */
+.ant-table-selection-column .ant-checkbox-wrapper {
+  padding: 8px;
+  margin: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Enlarge checkbox itself */
+.ant-table-selection-column .ant-checkbox-inner {
+  width: 18px !important;
+  height: 18px !important;
+  border-width: 2px !important;
+}
+
+/* Checkbox checked state - more visible */
+.ant-table-selection-column .ant-checkbox-checked .ant-checkbox-inner {
+  background-color: #1890ff;
+  border-color: #1890ff;
+}
+
+/* Hover effect for checkbox area */
+.ant-table-selection-column:hover {
+  background-color: #e6f7ff !important;
+  cursor: pointer;
+}
+
+/* Selected row highlight */
+.ant-table-tbody > tr.row-selected {
+  background-color: #e6f7ff !important;
+}
+
+.ant-table-tbody > tr.row-selected:hover {
+  background-color: #bae7ff !important;
+}
+
+/* Prevent text selection during clicking */
+.ant-table-tbody > tr {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Image column - clear indication it's not for navigation */
+.ant-table-cell:has(.ant-image) {
+  cursor: zoom-in !important;
+  background-color: #fafafa;
+}
+
+.ant-table-cell:has(.ant-image):hover {
+  background-color: #f0f0f0 !important;
+}
+
+/* Row hover effect - subtle and smooth */
+.ant-table-tbody > tr:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Cursor changes for different areas */
+.ant-table-tbody > tr {
+  cursor: pointer;
+}
+
+.ant-table-selection-column,
+.ant-checkbox-wrapper {
+  cursor: pointer !important;
+}
+
+/* Make sure image column has different cursor */
+.ant-table-cell:has(.ant-image),
+.ant-table-cell:has(.ant-image) * {
+  cursor: zoom-in !important;
+}
+
+/* Visual separator between checkbox and content */
+.ant-table-selection-column {
+  border-right: 2px solid #f0f0f0 !important;
+}
+
+/* Improve checkbox accessibility - larger touch target */
+@media (max-width: 768px) {
+  .ant-table-selection-column .ant-checkbox-wrapper {
+    padding: 12px;
+    margin: -12px;
+  }
+
+  .ant-table-selection-column .ant-checkbox-inner {
+    width: 20px !important;
+    height: 20px !important;
+  }
+}
+
+/* Focus state for keyboard navigation */
+.ant-checkbox-wrapper:focus-within {
+  outline: 2px solid #1890ff;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Prevent double-click text selection on row */
+.ant-table-tbody > tr::selection {
+  background: transparent;
+}
+
+/* Loading state should not be clickable */
+.ant-table-tbody > tr.ant-table-placeholder:hover {
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}

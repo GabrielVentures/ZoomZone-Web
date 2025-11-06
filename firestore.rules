@@ -1,0 +1,187 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ================================
+    // Helper Functions
+    // ================================
+
+    /**
+     * Check if user is authenticated
+     */
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    /**
+     * Get user data from Firestore
+     */
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    /**
+     * Get user role
+     */
+    function getUserRole() {
+      return isAuthenticated() ? getUserData().role : null;
+    }
+
+    /**
+     * Check if user is admin
+     */
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    /**
+     * Check if user has WebAdmin access (admin, user, or viewer)
+     */
+    function isWebAdmin() {
+      return isAuthenticated() && getUserRole() in ['admin', 'user', 'viewer'];
+    }
+
+    /**
+     * Check if user is mobile-only user
+     */
+    function isMobileUser() {
+      return isAuthenticated() && (getUserRole() == 'mobile_user' || getUserRole() == null);
+    }
+
+    /**
+     * Check if user owns the resource
+     */
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    /**
+     * Check if user is admin or owner
+     */
+    function isAdminOrOwner(userId) {
+      return isAdmin() || isOwner(userId);
+    }
+
+    // ================================
+    // Collection Rules
+    // ================================
+
+    /**
+     * scan_records: Admin full access, mobile users can access own data
+     * This is the core collection with scan data
+     */
+    match /scan_records/{recordId} {
+      // ✅ Admins can read all records
+      allow read: if isAdmin();
+
+      // ✅ WebAdmin users (admin, user, viewer) can read all records
+      allow read: if isWebAdmin();
+
+      // ✅ Mobile users can read their own records only
+      allow read: if isMobileUser() && resource.data.user_id == request.auth.uid;
+
+      // ✅ Admins can create records (when manually adding)
+      allow create: if isAdmin();
+
+      // ✅ Mobile users can create their own records
+      allow create: if isMobileUser() && request.resource.data.user_id == request.auth.uid;
+
+      // ✅ Admins can update records (for retry, corrections, etc.)
+      allow update: if isAdmin();
+
+      // ✅ Mobile users can update their own records
+      allow update: if isMobileUser() &&
+                       resource.data.user_id == request.auth.uid &&
+                       request.resource.data.user_id == request.auth.uid;
+
+      // ✅ Only admins can delete records
+      allow delete: if isAdmin();
+    }
+
+    /**
+     * users: Users can read own data, admin can read all
+     */
+    match /users/{userId} {
+      // ✅ Users can read their own profile, admins can read all
+      allow read: if isAdminOrOwner(userId);
+
+      // ✅ Users can update their own profile (limited fields)
+      // Cannot change role, created_at, uid, etc.
+      allow update: if isOwner(userId) &&
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['role', 'created_at', 'uid', 'created_by']);
+
+      // ✅ Admins can create users (via WebAdmin scripts)
+      allow create: if isAdmin();
+
+      // ✅ Mobile users can create their own user document (iOS registration)
+      // But must set role to 'mobile_user' or null
+      allow create: if isAuthenticated() &&
+                       userId == request.auth.uid &&
+                       (request.resource.data.role == 'mobile_user' || request.resource.data.role == null);
+
+      // ✅ Only admins can delete users
+      allow delete: if isAdmin();
+    }
+
+    /**
+     * user_cost_stats: Admin only
+     * Aggregated cost data per user
+     */
+    match /user_cost_stats/{userId} {
+      allow read, write: if isAdmin();
+    }
+
+    /**
+     * aggregation_cache: Admin read/write
+     * Cache for pre-calculated dashboard stats
+     */
+    match /aggregation_cache/{cacheId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    /**
+     * audit_logs: Admin read-only, system write
+     * Security audit trail
+     */
+    match /audit_logs/{logId} {
+      // Admins can read audit logs
+      allow read: if isAdmin();
+
+      // Only Cloud Functions can write audit logs
+      // In client, we'll use Firebase Admin SDK in Cloud Functions
+      allow write: if false;
+    }
+
+    /**
+     * budget_alerts: Admin only
+     * Budget warning notifications
+     */
+    match /budget_alerts/{alertId} {
+      allow read, write: if isAdmin();
+    }
+
+    /**
+     * system_config: Admin only
+     * System-wide configuration
+     */
+    match /system_config/{configId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ================================
+    // Default Deny All
+    // ================================
+
+    /**
+     * Deny all other access by default
+     * This is a security best practice
+     */
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
