@@ -24,8 +24,11 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebaseConfig';
 import { ScanRecord, AIResult, AICost } from '@/types';
-import { cacheManager, generateCacheKey } from '@/utils/cacheManager';
-import { CACHE, ERROR_MESSAGES } from '@/constants/app';
+import { cacheManager } from '@/utils/cacheManager';
+import { ERROR_MESSAGES } from '@/constants/app';
+import { cursorManager, PageCursor } from '@/utils/cursorManager';
+import { retryManager } from '@/utils/retryManager';
+import { requestDeduplicator } from '@/utils/requestDeduplicator';
 
 // ================================
 // Field Mapping Utilities
@@ -44,12 +47,18 @@ const mapFirestoreToScanRecord = (docId: string, data: DocumentData): ScanRecord
     aiResult = {
       title: aiResultData.product_name || aiResultData.title,
       price: aiResultData.price,
-      unitPrice: aiResultData.unit_price || aiResultData.unitPrice,
+      unit_price: aiResultData.unit_price,
+      count: aiResultData.count,
+      size: aiResultData.size,
+      unit: aiResultData.unit,
       category: aiResultData.category,
       brand: aiResultData.brand,
-      size: aiResultData.weight_or_count || aiResultData.size,
+      label_date: aiResultData.label_date,
+      expiration_date: aiResultData.expiration_date,
       promotion: aiResultData.promotion,
       description: aiResultData.description,
+      barcode_full: aiResultData.barcode_full,
+      barcode_shelf_tag: aiResultData.barcode_shelf_tag,
       confidence: aiResultData.confidence
         ? (typeof aiResultData.confidence === 'string'
             ? parseConfidenceString(aiResultData.confidence)
@@ -82,6 +91,8 @@ const mapFirestoreToScanRecord = (docId: string, data: DocumentData): ScanRecord
     uploadTimestamp: data.Upload_Timestamp?.toDate?.() || data.uploadTimestamp?.toDate?.(),
     merchant: data.Merchant || data.merchant,
     barcode: data.Barcode || data.barcode,
+    barcode_full: data.Barcode_Full || data.barcode_full,
+    barcode_shelf_tag: data.Barcode_ShelfTag || data.barcode_shelf_tag,
     latitude: data.Latitude ?? data.latitude,
     longitude: data.Longitude ?? data.longitude,
     storeLocation: data.Store_Location || data.storeLocation,
@@ -186,6 +197,138 @@ const isLogicalFilter = (filter: CrudFilter): filter is LogicalFilter => {
 };
 
 /**
+ * Check if error indicates cursor is invalid/expired
+ */
+const isCursorInvalidError = (error: any): boolean => {
+  const errorMessage = error?.message || '';
+  return (
+    errorMessage.includes('cursor') ||
+    errorMessage.includes('invalid') ||
+    errorMessage.includes('expired')
+  );
+};
+
+/**
+ * Load cursors sequentially from page 1 up to target page
+ * Used for forward navigation or recovery
+ */
+const loadCursorsUpToPage = async (
+  collectionRef: any,
+  sessionId: string,
+  targetPage: number,
+  pageSize: number,
+  filters?: CrudFilter[],
+  sorters?: Array<{ field: string; order: 'asc' | 'desc' }>
+): Promise<PageCursor | null> => {
+  console.log(`🔄 [FirestoreProvider] Loading cursors from page 1 to ${targetPage}...`);
+
+  let currentPage = 1;
+  let lastCursor: QueryDocumentSnapshot | undefined = undefined;
+
+  while (currentPage <= targetPage) {
+    // Build query constraints for current page
+    const constraints = buildQueryConstraints(filters, sorters, { pageSize }, lastCursor);
+    const q = query(collectionRef, ...constraints);
+    const snapshot = await getDocs(q);
+
+    const hasNextPage = snapshot.docs.length === pageSize;
+    const endCursor = (snapshot.docs[snapshot.docs.length - 1] as QueryDocumentSnapshot<DocumentData, DocumentData>) || undefined;
+
+    // Save cursor for this page
+    const pageCursor: PageCursor = {
+      pageNumber: currentPage,
+      pageSize,
+      startCursor: lastCursor,
+      endCursor,
+      hasNextPage,
+      recordCount: snapshot.docs.length,
+    };
+
+    cursorManager.saveCursor(sessionId, pageCursor);
+
+    if (currentPage === targetPage) {
+      return pageCursor;
+    }
+
+    // Move to next page
+    lastCursor = endCursor;
+    currentPage++;
+
+    // Stop if no more pages
+    if (!hasNextPage) {
+      console.log(`⏹️ [FirestoreProvider] Reached last page at ${currentPage - 1}`);
+      return null;
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Load cursors from a cached page forward to target page
+ * Used for smart recovery from nearest cached page
+ */
+const loadCursorsFromPage = async (
+  collectionRef: any,
+  sessionId: string,
+  startPage: number,
+  targetPage: number,
+  pageSize: number,
+  filters?: CrudFilter[],
+  sorters?: Array<{ field: string; order: 'asc' | 'desc' }>
+): Promise<PageCursor | null> => {
+  console.log(`🔄 [FirestoreProvider] Loading cursors from page ${startPage} to ${targetPage}...`);
+
+  // Get start cursor
+  const startCursor = cursorManager.getCursor(sessionId, startPage);
+  if (!startCursor) {
+    console.warn(`⚠️ [FirestoreProvider] Start page ${startPage} cursor not found`);
+    return null;
+  }
+
+  let currentPage = startPage + 1;
+  let lastCursor = startCursor.endCursor;
+
+  while (currentPage <= targetPage && lastCursor) {
+    // Build query constraints for current page
+    const constraints = buildQueryConstraints(filters, sorters, { pageSize }, lastCursor);
+    const q = query(collectionRef, ...constraints);
+    const snapshot = await getDocs(q);
+
+    const hasNextPage = snapshot.docs.length === pageSize;
+    const endCursor = (snapshot.docs[snapshot.docs.length - 1] as QueryDocumentSnapshot<DocumentData, DocumentData>) || undefined;
+
+    // Save cursor for this page
+    const pageCursor: PageCursor = {
+      pageNumber: currentPage,
+      pageSize,
+      startCursor: lastCursor,
+      endCursor,
+      hasNextPage,
+      recordCount: snapshot.docs.length,
+    };
+
+    cursorManager.saveCursor(sessionId, pageCursor);
+
+    if (currentPage === targetPage) {
+      return pageCursor;
+    }
+
+    // Move to next page
+    lastCursor = endCursor;
+    currentPage++;
+
+    // Stop if no more pages
+    if (!hasNextPage) {
+      console.log(`⏹️ [FirestoreProvider] Reached last page at ${currentPage - 1}`);
+      return null;
+    }
+  }
+
+  return null;
+};
+
+/**
  * Build Firestore query constraints from Refine filters
  */
 const buildQueryConstraints = (
@@ -273,69 +416,194 @@ const mapFieldToFirestore = (field: string): string => {
 export const firestoreDataProvider: DataProvider = {
   /**
    * Get list of resources with filtering, sorting, and pagination
+   * Now with proper cursor-based pagination support
    */
   getList: async ({ resource, pagination, filters, sorters }) => {
     console.log('🔥 [FirestoreProvider] getList:', { resource, pagination, filters, sorters });
 
-    // Check cache first
-    const cacheKey = generateCacheKey(resource, { pagination, filters, sorters });
-    const cachedData = cacheManager.get(cacheKey);
+    const currentPage = pagination?.current || 1;
+    const pageSize = pagination?.pageSize || 20;
 
-    if (cachedData) {
-      console.log('✅ [FirestoreProvider] Cache hit:', cacheKey);
-      return cachedData;
-    }
+    // Generate session ID for cursor management
+    const session = cursorManager.getOrCreateSession(filters, sorters);
+    const sessionId = session.sessionId;
+
+    console.log(`📍 [FirestoreProvider] Page ${currentPage}, Size ${pageSize}, Session: ${sessionId.substring(0, 30)}...`);
 
     try {
-      const collectionRef = collection(db, resource);
+      // Use request deduplicator to prevent duplicate concurrent requests
+      const dedupeKey = `getList_${resource}_${sessionId}_page_${currentPage}`;
 
-      // Build query constraints
-      const constraints = buildQueryConstraints(filters, sorters, pagination);
+      return await requestDeduplicator.execute(dedupeKey, async () => {
+        // Use retry manager for network resilience
+        return await retryManager.executeOrThrow(async () => {
+          const collectionRef = collection(db, resource);
 
-      // Execute query
-      const q = query(collectionRef, ...constraints);
-      const snapshot = await getDocs(q);
+          // ============================================
+          // Step 1: Check if we have cached cursor for this page
+          // ============================================
+          let pageCursor = cursorManager.getCursor(sessionId, currentPage);
+          let querySnapshot: any;
 
-      // Map documents
-      const data = snapshot.docs.map((doc) => {
-        if (resource === 'scan_records') {
-          return mapFirestoreToScanRecord(doc.id, doc.data());
-        }
-        return { id: doc.id, ...doc.data() };
-      });
+          if (pageCursor) {
+            // ============================================
+            // Happy path: Use cached cursor
+            // ============================================
+            console.log(`✅ [FirestoreProvider] Using cached cursor for page ${currentPage}`);
 
-      // Handle search filter client-side (Firestore doesn't support full-text search well)
-      let filteredData = data;
-      if (filters) {
-        const searchFilter = filters.find(
-          (f) => isLogicalFilter(f) && f.field === 'q'
-        ) as LogicalFilter | undefined;
+            try {
+              const constraints = buildQueryConstraints(
+                filters,
+                sorters,
+                { pageSize },
+                pageCursor.startCursor
+              );
+              const q = query(collectionRef, ...constraints);
+              querySnapshot = await getDocs(q);
+            } catch (error) {
+              // Cursor might be invalid/expired, try recovery
+              if (isCursorInvalidError(error)) {
+                console.warn(`⚠️ [FirestoreProvider] Cursor invalid, attempting recovery...`);
+                pageCursor = null; // Force recovery below
+              } else {
+                throw error;
+              }
+            }
+          }
 
-        if (searchFilter && searchFilter.value) {
-          const searchTerm = String(searchFilter.value).toLowerCase();
-          filteredData = data.filter((record: any) => {
-            return (
-              record.barcode?.toLowerCase().includes(searchTerm) ||
-              record.merchant?.toLowerCase().includes(searchTerm) ||
-              record.username?.toLowerCase().includes(searchTerm) ||
-              record.aiResult?.title?.toLowerCase().includes(searchTerm)
-            );
+          if (!pageCursor) {
+            // ============================================
+            // Recovery path: Need to load cursors
+            // ============================================
+
+            // Strategy 1: Check if we have any nearby cached page
+            const nearestCachedPage = cursorManager.findNearestCachedPage(sessionId, currentPage);
+
+            if (nearestCachedPage && nearestCachedPage > 0) {
+              // Strategy 1A: Smart recovery from nearest cached page
+              console.log(`🔄 [FirestoreProvider] Smart recovery from page ${nearestCachedPage} to ${currentPage}`);
+              pageCursor = await loadCursorsFromPage(
+                collectionRef,
+                sessionId,
+                nearestCachedPage,
+                currentPage,
+                pageSize,
+                filters,
+                sorters
+              );
+            } else {
+              // Strategy 1B: Full recovery from page 1
+              console.log(`🔄 [FirestoreProvider] Full recovery from page 1 to ${currentPage}`);
+              pageCursor = await loadCursorsUpToPage(
+                collectionRef,
+                sessionId,
+                currentPage,
+                pageSize,
+                filters,
+                sorters
+              );
+            }
+
+            // After recovery, execute final query for target page
+            if (pageCursor) {
+              const constraints = buildQueryConstraints(
+                filters,
+                sorters,
+                { pageSize },
+                pageCursor.startCursor
+              );
+              const q = query(collectionRef, ...constraints);
+              querySnapshot = await getDocs(q);
+            } else {
+              // No cursor available (maybe beyond last page)
+              console.warn(`⚠️ [FirestoreProvider] No cursor available for page ${currentPage}`);
+              return {
+                data: [],
+                total: session.estimatedTotal || 0,
+              };
+            }
+          }
+
+          // ============================================
+          // Step 2: Map documents
+          // ============================================
+          const data = querySnapshot.docs.map((doc: QueryDocumentSnapshot) => {
+            if (resource === 'scan_records') {
+              return mapFirestoreToScanRecord(doc.id, doc.data());
+            }
+            return { id: doc.id, ...doc.data() };
           });
-        }
-      }
 
-      console.log(`✅ [FirestoreProvider] Found ${filteredData.length} records`);
+          // ============================================
+          // Step 3: Handle client-side search filter
+          // ============================================
+          let filteredData = data;
+          if (filters) {
+            const searchFilter = filters.find(
+              (f) => isLogicalFilter(f) && f.field === 'q'
+            ) as LogicalFilter | undefined;
 
-      const result: { data: unknown[]; total: number } = {
-        data: filteredData,
-        total: filteredData.length,
-      };
+            if (searchFilter && searchFilter.value) {
+              const searchTerm = String(searchFilter.value).toLowerCase();
+              filteredData = data.filter((record: any) => {
+                return (
+                  record.barcode?.toLowerCase().includes(searchTerm) ||
+                  record.merchant?.toLowerCase().includes(searchTerm) ||
+                  record.username?.toLowerCase().includes(searchTerm) ||
+                  record.aiResult?.title?.toLowerCase().includes(searchTerm)
+                );
+              });
+            }
+          }
 
-      // Cache the result
-      cacheManager.set(cacheKey, result, CACHE.LIST_TTL);
+          // ============================================
+          // Step 4: Update cursor cache with fresh data
+          // ============================================
+          const hasNextPage = querySnapshot.docs.length === pageSize;
+          const endCursor = querySnapshot.docs[querySnapshot.docs.length - 1] || undefined;
 
-      return result as { data: any[]; total: number };
+          const newPageCursor: PageCursor = {
+            pageNumber: currentPage,
+            pageSize,
+            startCursor: pageCursor?.startCursor || undefined,
+            endCursor,
+            hasNextPage,
+            recordCount: querySnapshot.docs.length,
+          };
+
+          cursorManager.saveCursor(sessionId, newPageCursor);
+
+          // ============================================
+          // Step 5: Calculate total count
+          // ============================================
+          let total: number;
+
+          if (session.estimatedTotal !== null) {
+            // We already have accurate total from reaching last page before
+            total = session.estimatedTotal;
+          } else if (!hasNextPage && querySnapshot.docs.length < pageSize) {
+            // This is the last page - calculate accurate total
+            total = (currentPage - 1) * pageSize + querySnapshot.docs.length;
+            console.log(`📊 [FirestoreProvider] Reached last page, accurate total: ${total}`);
+          } else {
+            // Estimate based on current position
+            // Conservative estimate: assume at least 2 more pages
+            total = currentPage * pageSize + pageSize * 2;
+            console.log(`📊 [FirestoreProvider] Estimated total: ${total}`);
+          }
+
+          console.log(`✅ [FirestoreProvider] Loaded page ${currentPage}: ${filteredData.length} records, hasNext: ${hasNextPage}`);
+
+          const result = {
+            data: filteredData,
+            total,
+          };
+
+          return result as { data: any[]; total: number };
+        });
+      });
     } catch (error) {
+      console.error(`❌ [FirestoreProvider] getList failed:`, error);
       throw handleFirestoreError(error, 'getList');
     }
   },
@@ -470,6 +738,59 @@ export const firestoreDataProvider: DataProvider = {
       return { data: ids } as { data: any };
     } catch (error) {
       throw handleFirestoreError(error, 'deleteMany');
+    }
+  },
+
+  /**
+   * Get multiple resources by IDs
+   * Used for batch export/operations on cross-page selections
+   */
+  getMany: async ({ resource, ids }) => {
+    console.log('🔥 [FirestoreProvider] getMany:', { resource, ids: ids.length });
+
+    try {
+      // Firestore has a limit of 10 docs per getDoc batch, so we need to batch them
+      const BATCH_SIZE = 10;
+      const batches: any[][] = [];
+
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        batches.push(ids.slice(i, i + BATCH_SIZE));
+      }
+
+      const allDocs: any[] = [];
+
+      for (const batch of batches) {
+        const docPromises = batch.map(async (id) => {
+          const docRef = doc(db, resource, id as string);
+          const docSnap = await getDoc(docRef);
+
+          if (!docSnap.exists()) {
+            console.warn(`⚠️ [FirestoreProvider] Document not found: ${id}`);
+            return null;
+          }
+
+          const data = docSnap.data();
+
+          // Map Firestore data to ScanRecord format
+          if (resource === 'scan_records') {
+            return mapFirestoreToScanRecord(docSnap.id, data);
+          }
+
+          return {
+            id: docSnap.id,
+            ...data,
+          };
+        });
+
+        const batchResults = await Promise.all(docPromises);
+        allDocs.push(...batchResults.filter(doc => doc !== null));
+      }
+
+      console.log(`✅ [FirestoreProvider] Fetched ${allDocs.length}/${ids.length} documents`);
+
+      return { data: allDocs };
+    } catch (error) {
+      throw handleFirestoreError(error, 'getMany');
     }
   },
 

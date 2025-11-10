@@ -24,22 +24,38 @@ export enum ConfidenceLevel {
 // ================================
 
 export interface AIResult {
-  /** Product title */
+  /** Product title (from product_name in AI response) */
   title?: string;
-  /** Product price */
+  /** Product price (total price) */
   price?: string;
-  /** Unit price (e.g., "$0.044/oz") */
-  unitPrice?: string;
+  /** Unit price (e.g., "$0.044/oz", "$0.15/oz") - snake_case to match backend */
+  unit_price?: string;
+  /** Package quantity as number (e.g., 1, 4, 20) - calculated from price/unit_price */
+  count?: number;
+  /** Physical size/weight per unit (e.g., "20 oz", "1.76 oz") */
+  size?: string;
+  /** Measurement unit (e.g., "oz", "ct", "ml", "lb", "PK") */
+  unit?: string;
   /** Product category */
   category?: string;
   /** Product brand */
   brand?: string;
-  /** Product size/weight */
-  size?: string;
+  /** Label date in YYYY-MM-DD format (tag print date) */
+  label_date?: string;
+  /** Expiration date in YYYY-MM-DD format */
+  expiration_date?: string;
   /** Promotion text (e.g., "Buy 2 Get 1 Free") */
   promotion?: string;
   /** Product description */
   description?: string;
+
+  /** Complete UPC/EAN barcode (12-13 digits, e.g., "041196912982") */
+  barcode_full?: string;
+  /** Short shelf tag ID printed below barcode (typically 4-8 digits, e.g., "797329")
+   * This is the merchant's internal ID used for product lookup on their website (CVS.com, etc.)
+   */
+  barcode_shelf_tag?: string;
+
   /** Recognition confidence (0.0 - 1.0) */
   confidence?: number;
   /** Processing timestamp */
@@ -110,8 +126,18 @@ export interface ScanRecord {
   /** Merchant name (e.g., "Walmart", "Target") */
   merchant: string;
 
-  /** Barcode value */
-  barcode: string;
+  /** Complete UPC/EAN barcode (12-13 digits, e.g., "041196912982") */
+  barcode_full?: string;
+
+  /** Short shelf tag ID printed below barcode (typically 4-8 digits, e.g., "797329")
+   * This is the MOST IMPORTANT field for product lookup on merchant websites (CVS.com, etc.)
+   */
+  barcode_shelf_tag?: string;
+
+  /** @deprecated Legacy barcode field - kept for backward compatibility
+   * New code should use barcode_full and barcode_shelf_tag instead
+   */
+  barcode?: string;
 
   /** GPS latitude */
   latitude?: number;

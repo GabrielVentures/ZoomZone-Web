@@ -165,7 +165,9 @@ export const ScanRecordShow = () => {
                   {displayRecord.latitude.toFixed(6)}, {displayRecord.longitude.toFixed(6)}
                 </Text>
               </div>
-              {displayRecord.storeLocation && (
+              {displayRecord.storeLocation &&
+               displayRecord.storeLocation.toLowerCase() !== 'unknown' &&
+               displayRecord.storeLocation.toLowerCase() !== 'unknown store' && (
                 <div style={{ marginTop: 8 }}>
                   <Text>{displayRecord.storeLocation}</Text>
                 </div>
@@ -256,27 +258,56 @@ export const ScanRecordShow = () => {
                 )}
 
                 {displayRecord.aiResult.price && (
-                  <Descriptions.Item label="Price">
+                  <Descriptions.Item label="Total Price">
                     <Text strong style={{ fontSize: 16, color: '#52c41a' }}>
                       {displayRecord.aiResult.price}
                     </Text>
                   </Descriptions.Item>
                 )}
 
-                {displayRecord.aiResult.category && (
-                  <Descriptions.Item label="Category">{displayRecord.aiResult.category}</Descriptions.Item>
+                {displayRecord.aiResult.unit_price && (
+                  <Descriptions.Item label="Unit Price">
+                    <Text style={{ fontSize: 14, color: '#1890ff' }}>
+                      {displayRecord.aiResult.unit_price}
+                    </Text>
+                  </Descriptions.Item>
+                )}
+
+                {displayRecord.aiResult.count !== undefined && (
+                  <Descriptions.Item label="Count">
+                    <Text strong style={{ fontSize: 14 }}>
+                      {displayRecord.aiResult.count}
+                    </Text>
+                  </Descriptions.Item>
+                )}
+
+                {displayRecord.aiResult.unit && (
+                  <Descriptions.Item label="Unit">{displayRecord.aiResult.unit}</Descriptions.Item>
+                )}
+
+                {displayRecord.aiResult.label_date && (
+                  <Descriptions.Item label="Tag Date">
+                    <Text style={{ fontSize: 14, color: '#722ed1', fontWeight: 600 }}>
+                      {displayRecord.aiResult.label_date}
+                    </Text>
+                  </Descriptions.Item>
                 )}
 
                 {displayRecord.aiResult.brand && (
                   <Descriptions.Item label="Brand">{displayRecord.aiResult.brand}</Descriptions.Item>
                 )}
 
-                {displayRecord.aiResult.size && (
-                  <Descriptions.Item label="Size">{displayRecord.aiResult.size}</Descriptions.Item>
-                )}
-
                 {displayRecord.aiResult.description && (
                   <Descriptions.Item label="Description">{displayRecord.aiResult.description}</Descriptions.Item>
+                )}
+
+                {/* AI Extracted SKU */}
+                {displayRecord.aiResult.barcode_shelf_tag && (
+                  <Descriptions.Item label="SKU (AI)">
+                    <Text code style={{ fontSize: 13, fontWeight: 600, color: '#1890ff' }}>
+                      {displayRecord.aiResult.barcode_shelf_tag}
+                    </Text>
+                  </Descriptions.Item>
                 )}
 
                 {displayRecord.aiResult.confidence && (
@@ -371,12 +402,22 @@ export const ScanRecordShow = () => {
           <Card title="Basic Information">
             <Descriptions column={1}>
               <Descriptions.Item label="Status">{getAIStatusTag()}</Descriptions.Item>
-              <Descriptions.Item label="Merchant">
-                <Text strong>{displayRecord.merchant}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Barcode">
-                <Text code>{displayRecord.barcode}</Text>
-              </Descriptions.Item>
+              {/* Only show storeLocation, ignore merchant field */}
+              {displayRecord.storeLocation &&
+               displayRecord.storeLocation.toLowerCase() !== 'unknown' &&
+               displayRecord.storeLocation.toLowerCase() !== 'unknown store' && (
+                <Descriptions.Item label="Store">
+                  <Text strong>{displayRecord.storeLocation}</Text>
+                </Descriptions.Item>
+              )}
+              {/* Display SKU only */}
+              {(displayRecord.barcode_shelf_tag || displayRecord.aiResult?.barcode_shelf_tag) && (
+                <Descriptions.Item label="SKU">
+                  <Text code style={{ fontSize: 14, fontWeight: 600, color: '#1890ff' }}>
+                    {displayRecord.barcode_shelf_tag || displayRecord.aiResult?.barcode_shelf_tag}
+                  </Text>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="Username">{displayRecord.username}</Descriptions.Item>
               <Descriptions.Item label="Scanned">
                 {dayjs(displayRecord.timestamp).format('YYYY-MM-DD HH:mm:ss')}
