@@ -13,7 +13,6 @@ import { logBudgetChange, logBudgetReset } from './auditLogger';
 dayjs.extend(isoWeek);
 
 const BUDGET_STORAGE_KEY = 'shelftagsnap_budget_config';
-const FIRESTORE_BUDGET_PATH = 'settings/budget_config';
 
 // ================================
 // Default Budget Configuration

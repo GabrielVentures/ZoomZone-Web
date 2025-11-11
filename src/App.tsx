@@ -3,7 +3,7 @@
  * Main Application Entry Point
  */
 
-import { Refine } from '@refinedev/core';
+import { Refine, Authenticated } from '@refinedev/core';
 import {
   ErrorComponent,
   ThemedLayoutV2,
@@ -13,6 +13,7 @@ import {
 import routerBindings, {
   DocumentTitleHandler,
   UnsavedChangesNotifier,
+  CatchAllNavigate,
 } from '@refinedev/react-router-v6';
 import { App as AntdApp, ConfigProvider } from 'antd';
 import { BrowserRouter, Outlet, Route, Routes } from 'react-router-dom';
@@ -138,11 +139,16 @@ function App() {
                 {/* Authenticated Routes */}
                 <Route
                   element={
-                    <ThemedLayoutV2
-                      Sider={() => <ThemedSiderV2 Title={() => <div>🏷️ ShelfTagSnap</div>} />}
+                    <Authenticated
+                      key="authenticated-layout"
+                      fallback={<CatchAllNavigate to="/login" />}
                     >
-                      <Outlet />
-                    </ThemedLayoutV2>
+                      <ThemedLayoutV2
+                        Sider={() => <ThemedSiderV2 Title={() => <div>🏷️ ShelfTagSnap</div>} />}
+                      >
+                        <Outlet />
+                      </ThemedLayoutV2>
+                    </Authenticated>
                   }
                 >
                   {/* Dashboard - Accessible by all authenticated users */}

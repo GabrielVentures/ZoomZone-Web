@@ -13,11 +13,17 @@ import { useGetIdentity, useLogout } from '@refinedev/core';
 // Unauthorized Page Component
 // ================================
 
+interface UserIdentity {
+  uid: string;
+  email: string;
+  role?: string;
+}
+
 export const UnauthorizedPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { mutate: logout } = useLogout();
-  const { data: identity } = useGetIdentity();
+  const { data: identity } = useGetIdentity<UserIdentity>();
 
   // Get the path the user was trying to access
   const attemptedPath = location.state?.from || 'this page';

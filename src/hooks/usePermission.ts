@@ -110,6 +110,12 @@ const ROLE_PERMISSIONS: Record<UserRole, Record<string, string[]>> = {
     settings: [],
     dashboard: ['show'],
   },
+  mobile_user: {
+    scan_records: ['list', 'show', 'create'],
+    users: [],
+    settings: [],
+    dashboard: [],
+  },
 };
 
 /**

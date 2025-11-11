@@ -406,7 +406,9 @@ export const searchMockScanRecords = (keyword: string): ScanRecord[] => {
   const lowerKeyword = keyword.toLowerCase();
   return mockScanRecords.filter(
     (record) =>
-      record.barcode.toLowerCase().includes(lowerKeyword) ||
+      record.barcode?.toLowerCase().includes(lowerKeyword) ||
+      record.barcode_shelf_tag?.toLowerCase().includes(lowerKeyword) ||
+      record.barcode_full?.toLowerCase().includes(lowerKeyword) ||
       record.merchant.toLowerCase().includes(lowerKeyword) ||
       record.username.toLowerCase().includes(lowerKeyword) ||
       record.aiResult?.title?.toLowerCase().includes(lowerKeyword) ||

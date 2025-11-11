@@ -15,8 +15,8 @@ import {
   HistoryOutlined,
 } from '@ant-design/icons';
 import { useList, useNavigation } from '@refinedev/core';
-import { useMemo } from 'react';
-import { ScanRecord, AlertLevel } from '@/types';
+import { useMemo, useState, useEffect } from 'react';
+import { ScanRecord, BudgetConfig, AlertLevel } from '@/types';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { useDateRange } from '@/contexts/DateRangeContext';
 import { CostTrendChart } from '@/components/dashboard/CostTrendChart';
@@ -24,7 +24,7 @@ import { TokenUsageChart } from '@/components/dashboard/TokenUsageChart';
 import { AIStatusPieChart } from '@/components/dashboard/AIStatusPieChart';
 import { UserCostBarChart } from '@/components/dashboard/UserCostBarChart';
 import { RecordsActivityChart } from '@/components/dashboard/RecordsActivityChart';
-import { loadBudgetConfig, getHighestAlert, generateAlertMessage } from '@/utils/budgetUtils';
+import { loadBudgetConfig, getHighestAlert, generateAlertMessage, DEFAULT_BUDGET_CONFIG } from '@/utils/budgetUtils';
 import { getRetryStatistics } from '@/utils/retryUtils';
 import dayjs from 'dayjs';
 
@@ -33,7 +33,12 @@ const { Title, Text } = Typography;
 export const DashboardPage = () => {
   const { push } = useNavigation();
   const { dateRange } = useDateRange();
+  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(DEFAULT_BUDGET_CONFIG);
 
+  // Load budget config
+  useEffect(() => {
+    loadBudgetConfig().then(setBudgetConfig);
+  }, []);
 
   // Fetch all scan records
   const { data: scanRecordsData } = useList<ScanRecord>({
@@ -45,7 +50,6 @@ export const DashboardPage = () => {
   });
 
   // Check budget alerts
-  const budgetConfig = useMemo(() => loadBudgetConfig(), []);
   const highestAlert = useMemo(() => {
     if (!scanRecordsData?.data) return null;
     return getHighestAlert(scanRecordsData.data, budgetConfig);

@@ -18,9 +18,6 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  InfoCircleOutlined,
-  WarningOutlined,
-  ExclamationCircleOutlined,
   FileTextOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -32,7 +29,6 @@ import {
   ActivityLog,
   ActivityAction,
   ResourceType,
-  ActivityLevel,
   GetAuditLogsRequest,
   GetAuditLogsResponse,
 } from '@/types';
@@ -90,18 +86,27 @@ export const AuditLogsPage = () => {
           // Convert Firestore timestamps to Date objects
           const logsWithDates = result.data.data.logs.map(log => {
             // Handle Firestore Timestamp object
-            let timestamp = new Date();
+            let timestamp: Date;
+
             if (log.timestamp) {
-              if (typeof log.timestamp === 'object' && 'seconds' in log.timestamp) {
-                // Firestore Timestamp object
-                timestamp = new Date((log.timestamp as any).seconds * 1000);
+              if (typeof log.timestamp === 'object' && ('seconds' in log.timestamp || '_seconds' in log.timestamp)) {
+                // Firestore Timestamp object (can be {seconds, nanoseconds} or {_seconds, _nanoseconds})
+                const seconds = (log.timestamp as any).seconds || (log.timestamp as any)._seconds;
+                timestamp = new Date(seconds * 1000);
               } else if (typeof log.timestamp === 'string') {
                 // ISO string
                 timestamp = new Date(log.timestamp);
               } else if (log.timestamp instanceof Date) {
                 // Already a Date
                 timestamp = log.timestamp;
+              } else {
+                // Fallback: use original timestamp
+                timestamp = log.timestamp;
               }
+            } else {
+              // No timestamp field - this shouldn't happen, but handle gracefully
+              console.warn('Log entry missing timestamp:', log);
+              timestamp = new Date(0); // Use epoch time as fallback
             }
 
             return {
@@ -142,18 +147,6 @@ export const AuditLogsPage = () => {
   }, [currentPage, resourceTypeFilter, actionFilter, dateRange]);
 
   // Get level icon and color
-  const getLevelDisplay = (level: ActivityLevel) => {
-    switch (level) {
-      case ActivityLevel.INFO:
-        return <Tag icon={<InfoCircleOutlined />} color="blue">INFO</Tag>;
-      case ActivityLevel.WARNING:
-        return <Tag icon={<WarningOutlined />} color="orange">WARNING</Tag>;
-      case ActivityLevel.CRITICAL:
-        return <Tag icon={<ExclamationCircleOutlined />} color="red">CRITICAL</Tag>;
-      default:
-        return <Tag>{level}</Tag>;
-    }
-  };
 
   // Get resource type color
   const getResourceTypeColor = (resourceType: string) => {
