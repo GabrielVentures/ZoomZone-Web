@@ -4,27 +4,29 @@
  */
 
 import { useList, useNavigation, useDelete, useDataProvider } from '@refinedev/core';
-import { Table, Tag, Image, Space, Typography, Input, Select, Card, Button, Modal, message, Alert, Empty } from 'antd';
+import { Table, Image, Space, Typography, Input, Select, Card, Button, Modal, message, Alert, Empty } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   SearchOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
   CloseCircleOutlined,
   DownloadOutlined,
   DeleteOutlined,
   ReloadOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  SyncOutlined
 } from '@ant-design/icons';
 import { ScanRecord } from '@/types';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 // import { DateRangeFilter, type DateRange, isDateInRange } from '@/components/common/DateRangeFilter';
 import { logBatchScanRecordDelete, logScanRecordExport } from '@/utils/auditLogger';
 import { cursorManager } from '@/utils/cursorManager';
 import { selectionManager } from '@/utils/selectionManager';
 import { selectAllPagesManager, SelectAllStrategy } from '@/utils/selectAllPagesManager';
+// ⭐ NEW: AI components
+import { AIStatusTag, getAIStatus, BatchRetryModal, RetryButton } from '@/components/ai';
 
 dayjs.extend(relativeTime);
 
@@ -36,7 +38,7 @@ export const ScanRecordList = () => {
   const dataProvider = useDataProvider();
   const [searchText, setSearchText] = useState('');
   const [debouncedSearchText, setDebouncedSearchText] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>('all'); // Default to 'all'
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -46,6 +48,11 @@ export const ScanRecordList = () => {
   const [isAllPagesSelected, setIsAllPagesSelected] = useState(false);
   const [selectAllStrategy, setSelectAllStrategy] = useState<SelectAllStrategy | null>(null);
   const [isLoadingAllIds, setIsLoadingAllIds] = useState(false);
+
+  // ⭐ NEW: Batch Retry state
+  const [showBatchRetryModal, setShowBatchRetryModal] = useState(false);
+  const [failedCount, setFailedCount] = useState(0);
+  const [failedCountLoading, setFailedCountLoading] = useState(true);
 
   // Debounce search text
   useEffect(() => {
@@ -61,7 +68,8 @@ export const ScanRecordList = () => {
   // Build filters for useList
   const filters = useMemo(() => [
     ...(debouncedSearchText ? [{ field: 'q', operator: 'contains' as const, value: debouncedSearchText }] : []),
-    ...(statusFilter ? [{ field: 'aiStatus', operator: 'eq' as const, value: statusFilter }] : []),
+    // Only add aiStatus filter if it exists AND is not 'all'
+    ...(statusFilter && statusFilter !== 'all' ? [{ field: 'aiStatus', operator: 'eq' as const, value: statusFilter }] : []),
   ], [debouncedSearchText, statusFilter]);
 
   const sorters = useMemo(() => [
@@ -70,6 +78,11 @@ export const ScanRecordList = () => {
       order: 'desc' as const,
     },
   ], []);
+
+  // Reset pagination when filters change to avoid querying wrong page
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters]);
 
   const { data, isLoading, refetch } = useList<ScanRecord>({
     resource: 'scan_records',
@@ -80,6 +93,37 @@ export const ScanRecordList = () => {
     sorters,
     filters,
   });
+
+  // ⭐ Fetch accurate failed count from backend
+  // Always use Cloud Function to avoid stale data issues when filters change
+  useEffect(() => {
+    const fetchAccurateFailedCount = async () => {
+      setFailedCountLoading(true);
+      try {
+        const functions = getFunctions();
+        const getFailedScansCount = httpsCallable(functions, "getFailedScansCount");
+        const result = await getFailedScansCount({});
+        const responseData = result.data as any;
+
+        if (responseData.success) {
+          console.log(`✅ [FailedCount] Fetched accurate count from Cloud Function: ${responseData.failedCount}`);
+          setFailedCount(responseData.failedCount);
+        } else {
+          console.warn('⚠️ [FailedCount] Cloud Function returned success:false');
+          setFailedCount(0);
+        }
+      } catch (error) {
+        console.error('❌ [FailedCount] Failed to fetch from Cloud Function:', error);
+        setFailedCount(0);
+      } finally {
+        setFailedCountLoading(false);
+      }
+    };
+
+    // Always call Cloud Function to get accurate count
+    // This avoids using data.total which may be stale when filters change
+    fetchAccurateFailedCount();
+  }, [statusFilter]); // Removed refetch - avoid unnecessary re-fetches
 
   // Generate current session ID
   const currentSessionId = useMemo(() => {
@@ -292,28 +336,6 @@ export const ScanRecordList = () => {
         console.log('🛑 [SelectAll] User cancelled');
       }
     );
-  };
-
-  const getAIStatusTag = (record: ScanRecord) => {
-    if (record.aiProcessed && record.aiResult) {
-      return (
-        <Tag icon={<CheckCircleOutlined />} color="success">
-          Completed
-        </Tag>
-      );
-    } else if (record.aiError) {
-      return (
-        <Tag icon={<CloseCircleOutlined />} color="error">
-          Failed
-        </Tag>
-      );
-    } else {
-      return (
-        <Tag icon={<ClockCircleOutlined />} color="warning">
-          Pending
-        </Tag>
-      );
-    }
   };
 
   // Get selected records from current page
@@ -747,12 +769,9 @@ export const ScanRecordList = () => {
 
         if (!hasAI) {
           return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {getAIStatusTag(record)}
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Waiting for AI processing...
-              </Typography.Text>
-            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Waiting for AI processing...
+            </Typography.Text>
           );
         }
 
@@ -774,7 +793,6 @@ export const ScanRecordList = () => {
               }}>
                 {record.aiResult?.title || '—'}
               </div>
-              {getAIStatusTag(record)}
             </div>
 
             {/* Price Row - Updated per user requirements */}
@@ -845,6 +863,32 @@ export const ScanRecordList = () => {
         <div style={{ fontSize: 12, color: '#8c8c8c' }}>
           {dayjs(timestamp).fromNow()}
         </div>
+      ),
+    },
+    // ⭐ NEW: AI Status column
+    {
+      title: 'AI Status',
+      dataIndex: 'ai_status',
+      key: 'ai_status',
+      width: 160,
+      render: (_: any, record: ScanRecord) => (
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <AIStatusTag
+            status={getAIStatus(record)}
+            retryCount={record.ai_retry_count}
+          />
+          {getAIStatus(record) === 'failed' && (
+            <RetryButton
+              scanId={record.id}
+              onSuccess={() => {
+                refetch();
+                message.success('Scan queued for retry!');
+              }}
+              size="small"
+              type="link"
+            />
+          )}
+        </Space>
       ),
     },
   ];
@@ -936,20 +980,37 @@ export const ScanRecordList = () => {
               onChange={setStatusFilter}
               allowClear
             >
+              <Select.Option value="all">📊 All</Select.Option>
               <Select.Option value="completed">✅ Completed</Select.Option>
               <Select.Option value="pending">⏳ Pending</Select.Option>
               <Select.Option value="failed">❌ Failed</Select.Option>
             </Select>
           </Space>
 
-          {/* Refresh Button */}
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => refetch()}
-            loading={isLoading}
-          >
-            Refresh
-          </Button>
+          {/* Action Buttons */}
+          <Space>
+            {/* Batch Retry Button (Secondary Entry) - Primary entry is in Alert banner above */}
+            {!failedCountLoading && failedCount > 0 && (
+              <Button
+                type="default"
+                ghost
+                icon={<SyncOutlined />}
+                onClick={() => setShowBatchRetryModal(true)}
+                style={{ borderColor: '#ff7875', color: '#ff7875' }}
+              >
+                Retry All Failed ({failedCount})
+              </Button>
+            )}
+
+            {/* Refresh Button */}
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => refetch()}
+              loading={isLoading}
+            >
+              Refresh
+            </Button>
+          </Space>
         </div>
 
         {/* Gmail-Style Selection Banner */}
@@ -1071,6 +1132,43 @@ export const ScanRecordList = () => {
             type={isAllPagesSelected ? "warning" : "info"}
             style={{ marginBottom: 16 }}
             showIcon={false}
+          />
+        )}
+
+        {/* ⚠️ Alert Banner for Failed Scans */}
+        {!failedCountLoading && failedCount > 0 && (
+          <Alert
+            type="warning"
+            message={
+              <span style={{ fontSize: 14 }}>
+                ⚠️ <strong>{failedCount}</strong> scan{failedCount > 1 ? 's' : ''} failed AI processing
+              </span>
+            }
+            action={
+              <Space>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setStatusFilter('failed');
+                    message.info('Filtering failed scans');
+                  }}
+                >
+                  View Failed Items
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  danger
+                  icon={<SyncOutlined />}
+                  onClick={() => setShowBatchRetryModal(true)}
+                >
+                  Retry All Failed ({failedCount})
+                </Button>
+              </Space>
+            }
+            closable
+            style={{ marginBottom: 16 }}
+            showIcon
           />
         )}
 
@@ -1197,6 +1295,18 @@ export const ScanRecordList = () => {
           })}
         />
       </Card>
+
+      {/* ⭐ NEW: Batch Retry Modal */}
+      <BatchRetryModal
+        visible={showBatchRetryModal}
+        failedCount={failedCount}
+        onClose={() => setShowBatchRetryModal(false)}
+        onSuccess={(count) => {
+          refetch();
+          setFailedCount(0);
+          message.success(`${count} scans queued for retry successfully!`);
+        }}
+      />
     </div>
   );
 };

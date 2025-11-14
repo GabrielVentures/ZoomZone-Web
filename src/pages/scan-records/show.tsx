@@ -5,19 +5,20 @@
  */
 
 import { useShow } from '@refinedev/core';
-import { Card, Col, Row, Typography, Image, Tag, Descriptions, Space, Button, Modal, message, Alert, Skeleton } from 'antd';
+import { Card, Col, Row, Typography, Image, Tag, Descriptions, Space, message, Alert, Skeleton } from 'antd';
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
   EnvironmentOutlined,
-  ReloadOutlined,
   HistoryOutlined,
+  LoadingOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { ScanRecord } from '@/types';
 import dayjs from 'dayjs';
-import { useState } from 'react';
-import { retryAIProcessing, canRetry } from '@/utils/retryUtils';
+// ⭐ NEW: AI components
+import { AIStatusTag, getAIStatus, AIErrorAlert, RetryButton } from '@/components/ai';
 
 const { Title, Text } = Typography;
 
@@ -29,11 +30,8 @@ export const ScanRecordShow = () => {
   const { data, isLoading } = queryResult;
   const record = data?.data;
 
-  const [retrying, setRetrying] = useState(false);
-  const [localRecord, setLocalRecord] = useState<ScanRecord | null>(null);
-
-  // Use local record if available (after retry), otherwise use fetched record
-  const displayRecord = localRecord || record;
+  // Use fetched record directly
+  const displayRecord = record;
 
   if (isLoading || !displayRecord) {
     return (
@@ -70,73 +68,6 @@ export const ScanRecordShow = () => {
       </div>
     );
   }
-
-  // Handle AI retry
-  const handleRetry = () => {
-    Modal.confirm({
-      title: 'Retry AI Processing',
-      icon: <ReloadOutlined style={{ color: '#1890ff' }} />,
-      content: (
-        <div>
-          <p>Retry AI processing for this record?</p>
-          <p style={{ color: '#8c8c8c', fontSize: 12, marginTop: 8 }}>
-            This will re-submit the image to GPT-4o for recognition.
-          </p>
-          {displayRecord.retryCount && displayRecord.retryCount > 0 && (
-            <Alert
-              message={`Previous attempts: ${displayRecord.retryCount}`}
-              type="warning"
-              showIcon
-              style={{ marginTop: 8 }}
-            />
-          )}
-        </div>
-      ),
-      okText: 'Retry Now',
-      cancelText: 'Cancel',
-      onOk: async () => {
-        setRetrying(true);
-        try {
-          const result = await retryAIProcessing(displayRecord);
-
-          if (result.success) {
-            message.success('AI retry successful! Record updated.');
-            setLocalRecord(result.record);
-          } else {
-            message.error(`AI retry failed: ${result.error}`);
-            setLocalRecord(result.record);
-          }
-        } catch (error) {
-          message.error('Failed to retry AI processing');
-          console.error('Retry error:', error);
-        } finally {
-          setRetrying(false);
-        }
-      },
-    });
-  };
-
-  const getAIStatusTag = () => {
-    if (displayRecord.aiProcessed && displayRecord.aiResult) {
-      return (
-        <Tag icon={<CheckCircleOutlined />} color="success" style={{ fontSize: 14, padding: '4px 12px' }}>
-          AI Completed
-        </Tag>
-      );
-    } else if (displayRecord.aiError) {
-      return (
-        <Tag icon={<CloseCircleOutlined />} color="error" style={{ fontSize: 14, padding: '4px 12px' }}>
-          AI Failed
-        </Tag>
-      );
-    } else {
-      return (
-        <Tag icon={<ClockCircleOutlined />} color="warning" style={{ fontSize: 14, padding: '4px 12px' }}>
-          AI Pending
-        </Tag>
-      );
-    }
-  };
 
   return (
     <div style={{ padding: 24 }}>
@@ -321,87 +252,134 @@ export const ScanRecordShow = () => {
             </Card>
           )}
 
-          {/* AI Failed Card with Retry Button */}
-          {displayRecord.aiError && (
-            <Card
-              style={{
-                background: '#fff1f0',
-                border: '2px solid #ff4d4f',
-                marginBottom: 16,
-              }}
-            >
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <Space style={{ marginBottom: 8 }}>
-                    <CloseCircleOutlined style={{ fontSize: 18, color: '#ff4d4f' }} />
-                    <Title level={4} style={{ margin: 0, color: '#ff4d4f' }}>
-                      AI Processing Failed
-                    </Title>
-                  </Space>
-                  {canRetry(displayRecord) && (
-                    <Button
-                      type="primary"
-                      icon={<ReloadOutlined />}
-                      onClick={handleRetry}
-                      loading={retrying}
-                      size="small"
-                    >
-                      Retry AI
-                    </Button>
-                  )}
-                </Space>
-                <Text type="danger">{displayRecord.aiError}</Text>
-                {displayRecord.retryCount && displayRecord.retryCount >= 3 && (
+          {/* ⭐ NEW: AI Processing Status Card */}
+          <Card title="🤖 AI Processing Status" style={{ marginBottom: 16 }}>
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {/* Status Tag */}
+              <div>
+                <Text strong>Status: </Text>
+                <AIStatusTag
+                  status={getAIStatus(displayRecord)}
+                  retryCount={displayRecord?.ai_retry_count}
+                />
+              </div>
+
+              {/* Failed: Show friendly error and retry button */}
+              {getAIStatus(displayRecord) === 'failed' && (
+                <>
+                  <AIErrorAlert
+                    errorCode={(displayRecord?.ai_error_code as 'RATE_LIMIT' | 'QUOTA_EXCEEDED' | 'NETWORK_ERROR' | 'UNKNOWN') || null}
+                    errorMessage={displayRecord?.ai_processing_error_message}
+                  />
+                  <RetryButton
+                    scanId={displayRecord?.id || ''}
+                    onSuccess={() => {
+                      queryResult.refetch();
+                      message.success('Scan queued for retry!');
+                    }}
+                    type="primary"
+                    block
+                  />
+                </>
+              )}
+
+              {/* Processing: Show progress */}
+              {getAIStatus(displayRecord) === 'processing' && (
+                <Alert
+                  message="AI is analyzing your image..."
+                  description="This usually takes 5-10 seconds. Please wait."
+                  type="info"
+                  showIcon
+                  icon={<LoadingOutlined spin />}
+                />
+              )}
+
+              {/* Retrying: Show retry info */}
+              {getAIStatus(displayRecord) === 'retrying' && (
+                <Alert
+                  message={`Retrying (Attempt ${displayRecord?.ai_retry_count || 1}/3)...`}
+                  description="The system is automatically retrying after a temporary failure."
+                  type="warning"
+                  showIcon
+                  icon={<SyncOutlined spin />}
+                />
+              )}
+
+              {/* Queued: Show wait time */}
+              {getAIStatus(displayRecord) === 'queued' && (
+                <Alert
+                  message="Processing Queued"
+                  description="Your image is in the processing queue. Average wait time: 1-2 minutes."
+                  type="info"
+                  showIcon
+                  icon={<ClockCircleOutlined />}
+                />
+              )}
+
+              {/* Batch Processing: Show batch info */}
+              {getAIStatus(displayRecord) === 'batch_processing' && (
+                <Alert
+                  message="Batch Processing"
+                  description={`Part of batch upload. Position: ${displayRecord?.batch_position || 'N/A'}. Processing in progress...`}
+                  type="info"
+                  showIcon
+                  icon={<LoadingOutlined spin />}
+                />
+              )}
+
+              {/* Rate Limited: Show friendly message */}
+              {getAIStatus(displayRecord) === 'rate_limited' && (
+                <>
                   <Alert
-                    message="Maximum retry attempts reached"
-                    description="This record has reached the maximum number of retry attempts (3). Please check the image quality or contact support."
+                    message="⏸️ Processing Temporarily Paused"
+                    description="High volume detected. Your image has been queued and will be processed automatically in 1-2 minutes."
                     type="warning"
                     showIcon
-                    style={{ marginTop: 8 }}
                   />
-                )}
-              </Space>
-            </Card>
-          )}
+                  <RetryButton
+                    scanId={displayRecord?.id || ''}
+                    onSuccess={() => {
+                      queryResult.refetch();
+                      message.success('Scan queued for retry!');
+                    }}
+                    type="default"
+                    block
+                  />
+                </>
+              )}
 
-          {/* AI Pending Card with Retry Button */}
-          {!displayRecord.aiProcessed && !displayRecord.aiError && (
-            <Card
-              style={{
-                background: '#fffbe6',
-                border: '2px solid #faad14',
-                marginBottom: 16,
-              }}
-            >
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <Space style={{ width: '100%', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <Space style={{ marginBottom: 8 }}>
-                    <ClockCircleOutlined style={{ fontSize: 18, color: '#faad14' }} />
-                    <Title level={4} style={{ margin: 0, color: '#faad14' }}>
-                      AI Processing Pending
-                    </Title>
-                  </Space>
-                  {canRetry(displayRecord) && (
-                    <Button
-                      type="primary"
-                      icon={<ReloadOutlined />}
-                      onClick={handleRetry}
-                      loading={retrying}
-                      size="small"
-                    >
-                      Process Now
-                    </Button>
-                  )}
-                </Space>
-                <Text type="warning">This record is waiting for AI processing. You can manually trigger processing now.</Text>
-              </Space>
-            </Card>
-          )}
+              {/* Pending: Show manual trigger option */}
+              {getAIStatus(displayRecord) === 'pending' && (
+                <>
+                  <Alert
+                    message="AI Processing Not Started"
+                    description="This record is waiting for AI processing. You can manually trigger processing now."
+                    type="warning"
+                    showIcon
+                  />
+                  <RetryButton
+                    scanId={displayRecord?.id || ''}
+                    onSuccess={() => {
+                      queryResult.refetch();
+                      message.success('AI processing started!');
+                    }}
+                    type="primary"
+                    block
+                  />
+                </>
+              )}
+            </Space>
+          </Card>
 
           {/* Basic Information */}
           <Card title="Basic Information">
             <Descriptions column={1}>
-              <Descriptions.Item label="Status">{getAIStatusTag()}</Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <AIStatusTag
+                  status={getAIStatus(displayRecord)}
+                  retryCount={displayRecord?.ai_retry_count}
+                />
+              </Descriptions.Item>
               {/* Only show storeLocation, ignore merchant field */}
               {displayRecord.storeLocation &&
                displayRecord.storeLocation.toLowerCase() !== 'unknown' &&

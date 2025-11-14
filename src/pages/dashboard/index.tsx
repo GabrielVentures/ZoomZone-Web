@@ -14,9 +14,10 @@ import {
   ReloadOutlined,
   HistoryOutlined,
 } from '@ant-design/icons';
-import { useList, useNavigation } from '@refinedev/core';
+import { useList, useNavigation, useGetIdentity } from '@refinedev/core';
 import { useMemo, useState, useEffect } from 'react';
 import { ScanRecord, BudgetConfig, AlertLevel } from '@/types';
+import { usePermission } from '@/hooks/usePermission';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { useDateRange } from '@/contexts/DateRangeContext';
 import { CostTrendChart } from '@/components/dashboard/CostTrendChart';
@@ -35,14 +36,31 @@ export const DashboardPage = () => {
   const { dateRange } = useDateRange();
   const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(DEFAULT_BUDGET_CONFIG);
 
+  // Get user permissions
+  const { isAdmin } = usePermission();
+  const { data: userIdentity } = useGetIdentity<{ id: string }>();
+
   // Load budget config
   useEffect(() => {
     loadBudgetConfig().then(setBudgetConfig);
   }, []);
 
+  // Build filters based on user role
+  const scanRecordsFilters = useMemo(() => {
+    if (isAdmin) {
+      // Admin: show all users' records (no User_ID filter)
+      return [];
+    } else if (userIdentity?.id) {
+      // Normal user: show only own records
+      return [{ field: 'userId', operator: 'eq' as const, value: userIdentity.id }];
+    }
+    return [];
+  }, [isAdmin, userIdentity?.id]);
+
   // Fetch all scan records
   const { data: scanRecordsData } = useList<ScanRecord>({
     resource: 'scan_records',
+    filters: scanRecordsFilters,
     pagination: {
       current: 1,
       pageSize: 1000, // Get all records for stats calculation
@@ -70,7 +88,7 @@ export const DashboardPage = () => {
     const totalRecords = filteredRecords.length;
     const aiCompleted = filteredRecords.filter(r => r.aiProcessed && r.aiResult).length;
     const aiPending = filteredRecords.filter(r => !r.aiProcessed && !r.aiError).length;
-    const aiFailed = filteredRecords.filter(r => !r.aiProcessed && r.aiError).length;
+    const aiFailed = filteredRecords.filter(r => r.ai_status === 'failed').length;
 
     const uniqueUsers = new Set(filteredRecords.map(r => r.username)).size;
 

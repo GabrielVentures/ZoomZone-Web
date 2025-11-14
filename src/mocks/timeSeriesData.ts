@@ -162,7 +162,7 @@ export const generateAIStatusDistribution = (records: ScanRecord[]) => {
   records.forEach(record => {
     if (record.aiProcessed && record.aiResult) {
       completed++;
-    } else if (record.aiError) {
+    } else if (record.ai_status === 'failed') {
       failed++;
     } else {
       pending++;

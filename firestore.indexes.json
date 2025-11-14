@@ -1,0 +1,167 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "action",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "level",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "resource_type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "Merchant",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Upload_Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "User_ID",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "AI_Status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Upload_Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "User_ID",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Upload_Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ai_processed",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ai_status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "User_ID",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ai_status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "User_ID",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scan_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ai_status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "Timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

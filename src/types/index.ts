@@ -179,6 +179,38 @@ export interface ScanRecord {
 
   /** Total cumulative cost including retries */
   totalCostWithRetries?: number;
+
+  // -------- New AI Status Fields (Milestone 2 Enhanced) --------
+
+  /** AI processing status (pending, queued, processing, retrying, completed, failed, rate_limited, batch_processing) */
+  ai_status?: 'pending' | 'queued' | 'processing' | 'retrying' | 'completed' | 'failed' | 'rate_limited' | 'batch_processing';
+
+  /** AI retry count (enhanced retry system) */
+  ai_retry_count?: number;
+
+  /** AI error code (RATE_LIMIT, QUOTA_EXCEEDED, NETWORK_ERROR, UNKNOWN) */
+  ai_error_code?: string;
+
+  /** User-friendly AI error message */
+  ai_error_friendly?: string;
+
+  /** AI processing error code (backend format) */
+  ai_processing_error?: string;
+
+  /** Technical AI processing error message */
+  ai_processing_error_message?: string;
+
+  /** Timestamp when queued for processing */
+  queued_at?: Date;
+
+  /** Timestamp when processing started */
+  processing_started_at?: Date;
+
+  /** Batch ID if part of batch upload */
+  batch_id?: string;
+
+  /** Position in batch queue */
+  batch_position?: number;
 }
 
 // ================================

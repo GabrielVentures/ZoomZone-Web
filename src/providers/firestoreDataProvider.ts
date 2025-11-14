@@ -100,6 +100,11 @@ const mapFirestoreToScanRecord = (docId: string, data: DocumentData): ScanRecord
     imageUrl: data.Image_URL || data.imageUrl,
     aiProcessed: data.ai_processed ?? false,
     aiError: data.ai_processing_error_message || data.ai_error,
+    // ⭐ Map additional AI error fields for filtering
+    ai_processing_error: data.ai_processing_error,
+    ai_processing_error_message: data.ai_processing_error_message,
+    // ⭐ Map ai_status field (critical for status detection after migration)
+    ai_status: data.ai_status,
     aiResult,
     aiCost,
   };
@@ -347,16 +352,28 @@ const buildQueryConstraints = (
       // Skip search filter (handled separately)
       if (filter.field === 'q') return;
 
-      // Handle AI status filter
+      // ===== AI Status Filter =====
+      // ⚠️ Firestore Limitation: Cannot query ai_processing_error_message != null
+      //    Solution: Server-side query + client-side filtering (Step 3)
       if (filter.field === 'aiStatus' && filter.value) {
+        // Skip filter if value is 'all' - show all records
+        if (filter.value === 'all') {
+          return; // Don't add any where clause
+        }
+
         if (filter.value === 'completed') {
+          // Completed: ai_processed = true
           constraints.push(where('ai_processed', '==', true));
+
         } else if (filter.value === 'pending') {
+          // Pending: ai_processed = false (will include failed records)
+          // → Client-side filtering in Step 3 removes records with errors
           constraints.push(where('ai_processed', '==', false));
-          // Note: Can't easily filter for null error in Firestore
+
         } else if (filter.value === 'failed') {
-          constraints.push(where('ai_processed', '==', false));
-          // Would need a separate field or client-side filtering
+          // Query by ai_status field directly (unified after migration)
+          // This ensures we get ALL failed records, including those with ai_processed=true
+          constraints.push(where('ai_status', '==', 'failed'));
         }
       }
       // Handle other filters
@@ -410,6 +427,214 @@ const mapFieldToFirestore = (field: string): string => {
 };
 
 // ================================
+// Client-Side Filtering Helpers
+// ================================
+
+/**
+ * Apply client-side filters that cannot be done in Firestore
+ * @param data - Array of records to filter
+ * @param filters - Filter criteria
+ * @param resource - Resource type (for type-specific filtering)
+ * @returns Filtered array
+ */
+const applyClientSideFilters = (
+  data: any[],
+  filters?: CrudFilter[],
+  _resource?: string  // Prefix with _ to indicate intentionally unused
+): any[] => {
+  if (!filters || filters.length === 0) return data;
+
+  let filteredData = data;
+
+  // ===== Search filter =====
+  const searchFilter = filters.find(
+    (f) => isLogicalFilter(f) && f.field === 'q'
+  ) as LogicalFilter | undefined;
+
+  if (searchFilter && searchFilter.value) {
+    const searchTerm = String(searchFilter.value).toLowerCase();
+    filteredData = filteredData.filter((record: any) => {
+      return (
+        record.barcode?.toLowerCase().includes(searchTerm) ||
+        record.merchant?.toLowerCase().includes(searchTerm) ||
+        record.username?.toLowerCase().includes(searchTerm) ||
+        record.aiResult?.title?.toLowerCase().includes(searchTerm)
+      );
+    });
+  }
+
+  // ===== AI Status filter =====
+  const statusFilter = filters.find(
+    (f) => isLogicalFilter(f) && f.field === 'aiStatus'
+  ) as LogicalFilter | undefined;
+
+  if (statusFilter && statusFilter.value && statusFilter.value !== 'all') {
+    filteredData = filteredData.filter((record: any) => {
+      if (statusFilter.value === 'completed') {
+        return record.aiProcessed === true && record.aiResult;
+      }
+
+      if (statusFilter.value === 'failed') {
+        // Check ai_status field directly (unified after migration)
+        return record.ai_status === 'failed';
+      }
+
+      if (statusFilter.value === 'pending') {
+        // Pending = not processed and not failed
+        const hasResult = !!(record.aiProcessed && record.aiResult);
+        const isFailed = record.ai_status === 'failed';
+        return !hasResult && !isFailed;
+      }
+
+      return true; // Unknown status
+    });
+  }
+
+  return filteredData;
+};
+
+/**
+ * Check if query requires client-side filtering
+ * (which affects pagination strategy)
+ */
+const needsClientSideFiltering = (filters?: CrudFilter[]): boolean => {
+  if (!filters) return false;
+
+  return filters.some(f => {
+    if (!isLogicalFilter(f)) return false;
+
+    // Search filter requires client-side filtering
+    if (f.field === 'q' && f.value) return true;
+
+    // AI Status filters that need client-side filtering
+    // 'all', 'completed', 'failed' can be handled server-side (have indexes)
+    // 'pending' needs client-side filtering (no direct field for pending state)
+    if (f.field === 'aiStatus' && f.value) {
+      return f.value === 'pending'; // Only pending needs client-side filtering
+    }
+
+    return false;
+  });
+};
+
+/**
+ * Handle getList for queries that need client-side filtering
+ * Uses smart over-fetch strategy to ensure enough filtered results
+ */
+const handleClientSideFilteredList = async ({
+  collectionRef,
+  resource,
+  currentPage,
+  pageSize,
+  filters,
+  sorters,
+  sessionId,
+  pageCursor,
+}: {
+  collectionRef: any;
+  resource: string;
+  currentPage: number;
+  pageSize: number;
+  filters?: CrudFilter[];
+  sorters?: Array<{ field: string; order: 'asc' | 'desc' }>;
+  sessionId: string;
+  pageCursor?: PageCursor | null;
+}): Promise<{ data: any[]; total: number }> => {
+  console.log(`🔍 [SmartFetch] Page ${currentPage} with client-side filtering`);
+
+  const OVER_FETCH_MULTIPLIER = 3; // Fetch 3x more per batch
+  const MAX_ITERATIONS = 10; // Safety limit to prevent infinite loops
+  const MAX_FETCH_PER_ITERATION = pageSize * OVER_FETCH_MULTIPLIER;
+
+  let allCollectedData: any[] = [];
+  let currentCursor = pageCursor?.endCursor;
+  let totalFetched = 0;
+  let iteration = 0;
+
+  // For smart pagination: keep fetching until we have enough filtered results
+  while (iteration < MAX_ITERATIONS && allCollectedData.length < pageSize) {
+    iteration++;
+
+    // Build query constraints
+    const constraints = buildQueryConstraints(
+      filters,
+      sorters,
+      { pageSize: MAX_FETCH_PER_ITERATION },
+      currentCursor
+    );
+
+    const q = query(collectionRef, ...constraints);
+    const querySnapshot = await getDocs(q);
+
+    console.log(`📦 [SmartFetch] Iteration ${iteration}: Fetched ${querySnapshot.docs.length} raw docs`);
+
+    if (querySnapshot.docs.length === 0) {
+      console.log(`🏁 [SmartFetch] No more data available`);
+      break; // No more data
+    }
+
+    // Map documents to records
+    const batchData = querySnapshot.docs.map((doc: any) => {
+      if (resource === 'scan_records') {
+        return mapFirestoreToScanRecord(doc.id, doc.data());
+      }
+      return { id: doc.id, ...doc.data() };
+    });
+
+    // Apply client-side filtering
+    const filteredBatch = applyClientSideFilters(batchData, filters, resource);
+
+    console.log(`✅ [SmartFetch] Iteration ${iteration}: ${filteredBatch.length}/${batchData.length} passed filters`);
+
+    allCollectedData.push(...filteredBatch);
+    totalFetched += querySnapshot.docs.length;
+    currentCursor = querySnapshot.docs[querySnapshot.docs.length - 1] as any;
+
+    // Stop if we fetched less than requested (reached end of data)
+    if (querySnapshot.docs.length < MAX_FETCH_PER_ITERATION) {
+      console.log(`🏁 [SmartFetch] Reached end of data`);
+      break;
+    }
+  }
+
+  // Extract page of data
+  const pageData = allCollectedData.slice(0, pageSize);
+  const hasNextPage = allCollectedData.length > pageSize;
+
+  console.log(`📊 [SmartFetch] Collected ${allCollectedData.length} filtered records, returning ${pageData.length}`);
+
+  // Save cursor for this page
+  const newPageCursor: PageCursor = {
+    pageNumber: currentPage,
+    pageSize,
+    startCursor: pageCursor?.endCursor || undefined,
+    endCursor: currentCursor,
+    hasNextPage,
+    recordCount: pageData.length,
+  };
+
+  cursorManager.saveCursor(sessionId, newPageCursor);
+
+  // Calculate total
+  // For client-filtered queries, we can only estimate
+  let total: number;
+  if (!hasNextPage) {
+    // Reached end - accurate total
+    total = (currentPage - 1) * pageSize + pageData.length;
+    console.log(`📊 [SmartFetch] Accurate total: ${total}`);
+  } else {
+    // Estimate conservatively (show a few more pages)
+    total = currentPage * pageSize + pageSize * 2;
+    console.log(`📊 [SmartFetch] Estimated total: ${total}`);
+  }
+
+  return {
+    data: pageData,
+    total,
+  };
+};
+
+// ================================
 // Firestore Data Provider
 // ================================
 
@@ -438,6 +663,40 @@ export const firestoreDataProvider: DataProvider = {
         // Use retry manager for network resilience
         return await retryManager.executeOrThrow(async () => {
           const collectionRef = collection(db, resource);
+
+          // ============================================
+          // STRATEGY SELECTION: Check if client-side filtering is needed
+          // ============================================
+          if (needsClientSideFiltering(filters)) {
+            console.log('🔄 [FirestoreProvider] Using smart over-fetch strategy for client-side filtering');
+
+            // Get cursor for pagination
+            let pageCursor = cursorManager.getCursor(sessionId, currentPage);
+
+            // For page > 1, get cursor from previous page
+            if (currentPage > 1 && !pageCursor) {
+              const previousPageCursor = cursorManager.getCursor(sessionId, currentPage - 1);
+              if (previousPageCursor) {
+                pageCursor = previousPageCursor; // Use previous page's end cursor as start
+              }
+            }
+
+            return await handleClientSideFilteredList({
+              collectionRef,
+              resource,
+              currentPage,
+              pageSize,
+              filters,
+              sorters,
+              sessionId,
+              pageCursor,
+            });
+          }
+
+          // ============================================
+          // NORMAL PAGINATION STRATEGY (no client-side filtering)
+          // ============================================
+          console.log('📄 [FirestoreProvider] Using normal pagination strategy');
 
           // ============================================
           // Step 1: Check if we have cached cursor for this page
@@ -535,26 +794,9 @@ export const firestoreDataProvider: DataProvider = {
           });
 
           // ============================================
-          // Step 3: Handle client-side search filter
+          // Step 3: Handle client-side filtering
           // ============================================
-          let filteredData = data;
-          if (filters) {
-            const searchFilter = filters.find(
-              (f) => isLogicalFilter(f) && f.field === 'q'
-            ) as LogicalFilter | undefined;
-
-            if (searchFilter && searchFilter.value) {
-              const searchTerm = String(searchFilter.value).toLowerCase();
-              filteredData = data.filter((record: any) => {
-                return (
-                  record.barcode?.toLowerCase().includes(searchTerm) ||
-                  record.merchant?.toLowerCase().includes(searchTerm) ||
-                  record.username?.toLowerCase().includes(searchTerm) ||
-                  record.aiResult?.title?.toLowerCase().includes(searchTerm)
-                );
-              });
-            }
-          }
+          const filteredData = applyClientSideFilters(data, filters, resource);
 
           // ============================================
           // Step 4: Update cursor cache with fresh data
